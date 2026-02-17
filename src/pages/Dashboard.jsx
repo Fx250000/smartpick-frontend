@@ -2,74 +2,68 @@ import { useState, useEffect } from 'react';
 
 export default function Dashboard() {
     const [data, setData] = useState(null);
-    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        // Faz o fetch (pedido HTTP) à API do Spring Boot
-        fetch('http://localhost:8080/api/dashboard')
-            .then(response => response.json())
-            .then(json => {
-                setData(json);
-                setLoading(false); // Desliga o ecrã de carregamento
-            })
-            .catch(error => console.error("Erro ao buscar dados do Spring:", error));
+        fetch('http://localhost:8080/api/delivery/history')
+            .then(res => res.json())
+            .then(json => setData(json));
     }, []);
 
-    // Enquanto o Java pensa, mostramos isto:
-    if (loading) {
-        return <main className="main-content"><h2 style={{textAlign: 'center', marginTop: '50px'}}>Calculando Métricas Kanban...</h2></main>;
-    }
+    if (!data) return <div className="main-content">Carregando...</div>;
 
-    // Quando o JSON chega, montamos o HTML dinamicamente
     return (
         <main className="main-content">
-            <div className="card">
-                <div className="table-header">
-                    <h2>Métricas para Dimensionamento Kanban</h2>
+            {/* KPI Section */}
+            <div className="kpi-grid">
+                <div className="kpi-card">
+                    <div className="kpi-label">Throughput</div>
+                    <div className="kpi-value">{data.summary.throughput}</div>
                 </div>
-
-                <div className="kpi-grid">
-                    <div className="kpi-card">
-                        <div className="kpi-label">Lead Time Médio (Global)</div>
-                        <div className="kpi-value">{data.avgLeadTime}</div>
-                        <div style={{fontSize: '0.8rem', color: '#64748b', marginTop: '5px'}}>Média de todo o histórico</div>
-                    </div>
-                    <div className="kpi-card">
-                        <div className="kpi-label">Ciclos Resolvidos</div>
-                        <div className="kpi-value">{data.resolvedCount}</div>
-                        <div style={{fontSize: '0.8rem', color: '#64748b', marginTop: '5px'}}>Amostragem processada</div>
-                    </div>
+                <div className="kpi-card">
+                    <div className="kpi-label">Volume Total</div>
+                    <div className="kpi-value">{data.summary.totalVolume}</div>
                 </div>
+                <div className="kpi-card">
+                    <div className="kpi-label">Fill Rate Global</div>
+                    <div className="kpi-value">{data.summary.globalFillRate}</div>
+                </div>
+            </div>
 
-                <div className="separator"></div>
-
-                <div className="section-title">Curva ABC - Demanda de Peças (React Render)</div>
-                <div className="table-container">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginTop: '20px' }}>
+                {/* Curva ABC Table */}
+                <div className="card">
+                    <h3>Curva ABC (Top 10 Produtos)</h3>
                     <table>
                         <thead>
-                        <tr>
-                            <th className="align-left">Código do Produto</th>
-                            <th className="align-left">Descrição</th>
-                            <th className="align-center">Local (Zona)</th>
-                            <th className="align-center">Volume Consumido</th>
-                        </tr>
+                        <tr><th>Código</th><th>Volume</th><th>Zona</th></tr>
                         </thead>
                         <tbody>
-                        {/* O Map substitui o th:each do Thymeleaf */}
-                        {data.abcData && data.abcData.length > 0 ? (
-                            data.abcData.map((row, index) => (
-                                <tr key={index}>
-                                    <td className="align-left" style={{fontWeight: 600}}>{row[0]}</td>
-                                    <td className="align-left">{row[1]}</td>
-                                    <td className="align-center">{row[2]}</td>
-                                    <td className="align-center" style={{fontWeight: 700}}>{row[3]}</td>
-                                </tr>
-                            ))
-                        ) : (
-                            <tr>
-                                <td colSpan="4" style={{textAlign: 'center', padding: '3rem', color: '#64748b'}}>Nenhum histórico registrado.</td>
+                        {data.abcCurve.map((item, i) => (
+                            <tr key={i}>
+                                <td>{item.code}</td>
+                                <td>{item.volume} un</td>
+                                <td>{item.zone}</td>
                             </tr>
-                        )}
+                        ))}
+                        </tbody>
+                    </table>
+                </div>
+
+                {/* Lead Time Kanban */}
+                <div className="card">
+                    <h3>Lead Time por Zona (Horas)</h3>
+                    <table>
+                        <thead>
+                        <tr><th>Zona</th><th>Produto</th><th>Média Lead Time</th></tr>
+                        </thead>
+                        <tbody>
+                        {data.kanban.map((item, i) => (
+                            <tr key={i}>
+                                <td>{item.zone}</td>
+                                <td>{item.code}</td>
+                                <td>{parseFloat(item.avgleadtime).toFixed(2)}h</td>
+                            </tr>
+                        ))}
                         </tbody>
                     </table>
                 </div>
