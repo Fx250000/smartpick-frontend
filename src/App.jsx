@@ -3,7 +3,8 @@ import TopBar from './components/TopBar';
 import Dashboard from './pages/Dashboard';
 import MissingReport from './pages/MissingReport';
 import PickingList from './pages/PickingList';
-import DeliveryHistory from './pages/DeliveryHistory'; // <-- NOVA IMPORTAÇÃO
+import DeliveryHistory from './pages/DeliveryHistory';
+import ShiftReport from './pages/ShiftReport';
 
 function App() {
     return (
@@ -14,6 +15,7 @@ function App() {
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/reports/missing" element={<MissingReport />} />
                 <Route path="/reports/history" element={<DeliveryHistory />} />
+                <Route path="/reports/ShiftReport" element={<ShiftReport/>} />
             </Routes>
         </BrowserRouter>
     );
