@@ -20,6 +20,29 @@ export default function PickingList() {
             .catch(err => console.error("Erro ao carregar lista:", err));
     };
 
+    // FUNÇÕES DE FORMATAÇÃO VISUAL
+    const formatOpd = (raw) => {
+        if (!raw) return "";
+        const str = String(raw).replace(/\D/g, ''); // Mantém apenas números
+        if (str.length < 5) return str;
+        const year = str.slice(-4);
+        const seq = str.slice(0, -4).padStart(6, '0');
+        return `${seq}/${year}`;
+    };
+
+    const formatProductCode = (raw) => {
+        if (!raw) return "";
+        let str = String(raw).trim();
+        if (str.length < 13) {
+            str = str.padStart(13, '0');
+        }
+        // Aplica a máscara apenas se a string resultante contiver exatamente 13 dígitos numéricos
+        if (/^\d{13}$/.test(str)) {
+            return str.replace(/^(\d{2})(\d{3})(\d{3})(\d{5})$/, '$1.$2.$3.$4');
+        }
+        return str;
+    };
+
     useEffect(() => {
         fetchCurrent();
     }, []);
@@ -36,14 +59,19 @@ export default function PickingList() {
             method: 'POST',
             body: formData
         })
-            .then(res => res.json())
-            .then(data => {
-                const enriched = data.map(i => ({ ...i, found: 0 }));
-                setItems(enriched);
-                if (data.length > 0) setGlobalOpd(data[0].opd);
-                e.target.value = null; // Reseta o input
+            .then(res => {
+                if (!res.ok) throw new Error("Falha na resposta do servidor");
+                return res.json();
             })
-            .catch(err => alert("Erro ao processar o arquivo."));
+            .then(data => {
+                // O upload deu certo. Em vez de mapear a mensagem, buscamos a lista real do banco.
+                fetchCurrent();
+                if (fileInputRef.current) fileInputRef.current.value = null; // Reseta o input
+            })
+            .catch(err => {
+                console.error(err);
+                alert("Erro ao processar o arquivo.");
+            });
     };
 
     // 3. FINALIZAR SESSÃO
@@ -175,7 +203,9 @@ export default function PickingList() {
                     <div className="table-header">
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                             <label style={{ fontWeight: 'bold', color: 'var(--text-dark)' }}>OPD:</label>
-                            <input type="text" value={globalOpd} onChange={(e) => setGlobalOpd(e.target.value)}
+                            <input type="text"
+                                   value={formatOpd(globalOpd)}
+                                   onChange={(e) => setGlobalOpd(e.target.value.replace(/\D/g, ''))}
                                    style={{ padding: '6px 10px', border: '1px solid var(--border)', borderRadius: '4px', fontWeight: 'bold', fontSize: '1.05rem', color: 'var(--primary-dark)', width: '160px' }} />
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginLeft: 'auto' }}>
@@ -211,7 +241,7 @@ export default function PickingList() {
                                     const isDone = kit.found === kit.quantityRequested && kit.quantityRequested > 0;
                                     return (
                                         <tr key={kit.uniqueId} className={isDone ? "picked" : ""}>
-                                            <td className="align-left" style={{ fontWeight: 700 }}>{kit.productCode}</td>
+                                            <td className="align-left" style={{ fontWeight: 700 }}>{formatProductCode(kit.productCode)}</td>
                                             <td className="align-left">{kit.description}</td>
                                             <td className="align-center" style={{ color: !kit.inScope ? '#ef4444' : 'inherit', fontWeight: !kit.inScope ? 'bold' : 'normal' }}>{kit.zone}</td>
                                             <td className="align-center" style={{ fontWeight: 700 }}>{kit.quantityRequested}</td>
@@ -252,7 +282,7 @@ export default function PickingList() {
                                 const isDone = part.found === part.req && part.req > 0;
                                 return (
                                     <tr key={part.code} className={isDone ? "picked" : ""}>
-                                        <td className="align-left" style={{ fontWeight: 600 }}>{part.code}</td>
+                                        <td className="align-left" style={{ fontWeight: 600 }}>{formatProductCode(part.code)}</td>
                                         <td className="align-left">{part.desc}</td>
                                         <td className="align-center" style={{ color: !part.inScope ? '#ef4444' : 'inherit', fontWeight: !part.inScope ? 'bold' : 'normal' }}>{part.zone}</td>
                                         <td className="align-center" style={{ fontWeight: 700 }}>{part.req}</td>
