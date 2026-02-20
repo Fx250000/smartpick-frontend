@@ -4,48 +4,74 @@ export default function PickingList() {
     const [items, setItems] = useState([]);
     const [globalOpd, setGlobalOpd] = useState("");
     const [opdComment, setOpdComment] = useState("");
+    const [multiplier, setMultiplier] = useState(1);
     const [showAllZones, setShowAllZones] = useState(false);
     const [kitsOpen, setKitsOpen] = useState(false);
     const fileInputRef = useRef(null);
 
-    // 1. CARREGAR DADOS ATUAIS (CASO FAÇA F5)
+    // 1. CARREGAR DADOS ATUAIS (Com Inteligência de Auto-Save)
     const fetchCurrent = () => {
         fetch('http://localhost:8080/api/picking/current')
             .then(res => res.json())
             .then(data => {
-                const enriched = data.map(i => ({ ...i, found: 0 }));
+                // Recupera o rascunho do navegador, se existir
+                const savedStr = localStorage.getItem('smartpick_session');
+                let savedData = null;
+                if (savedStr) {
+                    try { savedData = JSON.parse(savedStr); } catch (e) {}
+                }
+
+                // Cruza os dados do banco com as quantidades rasunhadas
+                const enriched = data.map(i => {
+                    let f = 0;
+                    if (savedData && savedData.foundItems && savedData.foundItems[i.uniqueId] !== undefined) {
+                        f = savedData.foundItems[i.uniqueId];
+                    }
+                    return { ...i, found: f };
+                });
+
                 setItems(enriched);
-                if (data.length > 0 && !globalOpd) setGlobalOpd(data[0].opd);
+
+                // Restaura cabeçalhos ou define padrões
+                if (savedData) {
+                    if (savedData.globalOpd) setGlobalOpd(savedData.globalOpd);
+                    if (savedData.opdComment) setOpdComment(savedData.opdComment);
+                    if (savedData.multiplier) setMultiplier(savedData.multiplier);
+                } else if (data.length > 0) {
+                    setGlobalOpd(data[0].opd || "");
+                    setMultiplier(1);
+                }
             })
             .catch(err => console.error("Erro ao carregar lista:", err));
-    };
-
-    // FUNÇÕES DE FORMATAÇÃO VISUAL
-    const formatOpd = (raw) => {
-        if (!raw) return "";
-        const str = String(raw).replace(/\D/g, ''); // Mantém apenas números
-        if (str.length < 5) return str;
-        const year = str.slice(-4);
-        const seq = str.slice(0, -4).padStart(6, '0');
-        return `${seq}/${year}`;
     };
 
     const formatProductCode = (raw) => {
         if (!raw) return "";
         let str = String(raw).trim();
-        if (str.length < 13) {
-            str = str.padStart(13, '0');
-        }
-        // Aplica a máscara apenas se a string resultante contiver exatamente 13 dígitos numéricos
-        if (/^\d{13}$/.test(str)) {
-            return str.replace(/^(\d{2})(\d{3})(\d{3})(\d{5})$/, '$1.$2.$3.$4');
-        }
+        if (str.length < 13) str = str.padStart(13, '0');
+        if (/^\d{13}$/.test(str)) return str.replace(/^(\d{2})(\d{3})(\d{3})(\d{5})$/, '$1.$2.$3.$4');
         return str;
     };
 
     useEffect(() => {
         fetchCurrent();
     }, []);
+
+    // NOVO: GATILHO DE AUTO-SAVE SILENCIOSO
+    useEffect(() => {
+        if (items.length > 0) {
+            const foundItems = {};
+            items.forEach(i => foundItems[i.uniqueId] = i.found);
+
+            const sessionData = {
+                globalOpd,
+                opdComment,
+                multiplier,
+                foundItems
+            };
+            localStorage.setItem('smartpick_session', JSON.stringify(sessionData));
+        }
+    }, [items, globalOpd, opdComment, multiplier]);
 
     // 2. UPLOAD DE ARQUIVO
     const handleUpload = (e) => {
@@ -64,9 +90,10 @@ export default function PickingList() {
                 return res.json();
             })
             .then(data => {
-                // O upload deu certo. Em vez de mapear a mensagem, buscamos a lista real do banco.
+                // Ao carregar nova lista, apaga o rascunho antigo
+                localStorage.removeItem('smartpick_session');
                 fetchCurrent();
-                if (fileInputRef.current) fileInputRef.current.value = null; // Reseta o input
+                if (fileInputRef.current) fileInputRef.current.value = null;
             })
             .catch(err => {
                 console.error(err);
@@ -81,6 +108,7 @@ export default function PickingList() {
         const payload = {
             globalOpd: globalOpd,
             opdComment: opdComment,
+            multiplier: parseInt(multiplier) || 1,
             items: {}
         };
 
@@ -95,63 +123,74 @@ export default function PickingList() {
         })
             .then(res => res.json())
             .then(data => {
+                // Sucesso! Limpa a tela e o rascunho
                 setItems([]);
                 setGlobalOpd("");
                 setOpdComment("");
+                setMultiplier(1);
+                localStorage.removeItem('smartpick_session');
                 alert(data.message);
             });
     };
 
     // 4. LÓGICA DE NEGÓCIO: KITS E PEÇAS
     const handleKitChange = (kitId, val) => {
+        const mult = parseInt(multiplier) || 1;
+
         setItems(prev => {
             const next = prev.map(i => ({ ...i }));
             const kit = next.find(i => i.uniqueId === kitId);
+            const targetReq = kit.quantityRequested * mult;
+
             let newFound = parseInt(val) || 0;
-            if (newFound > kit.quantityRequested) newFound = kit.quantityRequested;
+            if (newFound > targetReq) newFound = targetReq;
             kit.found = newFound;
 
             const children = next.filter(i => i.parentCode === kitId);
             children.forEach(c => {
-                c.found = kit.quantityRequested > 0 ? Math.floor(c.quantityRequested * (kit.found / kit.quantityRequested)) : 0;
+                const cTarget = c.quantityRequested * mult;
+                c.found = targetReq > 0 ? Math.floor(cTarget * (kit.found / targetReq)) : 0;
             });
             return next;
         });
     };
 
     const handlePartChange = (code, val) => {
+        const mult = parseInt(multiplier) || 1;
+
         setItems(prev => {
             const next = prev.map(i => ({ ...i }));
             const refs = next.filter(i => i.productCode === code && !i.kitParent);
-            const totalReq = refs.reduce((acc, curr) => acc + curr.quantityRequested, 0);
+            const totalReq = refs.reduce((acc, curr) => acc + (curr.quantityRequested * mult), 0);
 
             let newFound = parseInt(val) || 0;
             if (newFound > totalReq) newFound = totalReq;
 
             let remaining = newFound;
             refs.forEach(item => {
-                if (remaining >= item.quantityRequested) {
-                    item.found = item.quantityRequested;
-                    remaining -= item.quantityRequested;
+                const itemTarget = item.quantityRequested * mult;
+                if (remaining >= itemTarget) {
+                    item.found = itemTarget;
+                    remaining -= itemTarget;
                 } else {
                     item.found = remaining;
                     remaining = 0;
                 }
             });
 
-            // Atualiza Kits baseado nos filhos
             next.filter(i => i.kitParent).forEach(kit => {
+                const kitTarget = kit.quantityRequested * mult;
                 const children = next.filter(i => i.parentCode === kit.uniqueId);
                 if (children.length > 0) {
-                    const allDone = children.every(c => c.found === c.quantityRequested);
-                    kit.found = allDone ? kit.quantityRequested : 0;
+                    const allDone = children.every(c => c.found === (c.quantityRequested * mult));
+                    kit.found = allDone ? kitTarget : 0;
                 }
             });
             return next;
         });
     };
 
-    // 5. AGREGAÇÃO MATEMÁTICA PARA RENDERIZAÇÃO
+    // 5. AGREGAÇÃO MATEMÁTICA
     const aggregatedParts = {};
     items.filter(i => !i.kitParent).forEach(part => {
         if (!aggregatedParts[part.productCode]) {
@@ -173,10 +212,12 @@ export default function PickingList() {
     const kitsArray = items.filter(i => i.kitParent);
 
     // 6. CÁLCULO DE PROGRESSO
+    const currentMult = parseInt(multiplier) || 1;
     let totalProgress = 0, doneProgress = 0;
+
     partsArray.forEach(agg => {
         if (agg.req > 0 && (agg.inScope || showAllZones)) {
-            totalProgress += agg.req;
+            totalProgress += (agg.req * currentMult);
             doneProgress += agg.found;
         }
     });
@@ -201,13 +242,25 @@ export default function PickingList() {
             ) : (
                 <div className="card">
                     <div className="table-header">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <label style={{ fontWeight: 'bold', color: 'var(--text-dark)' }}>OPD:</label>
-                            <input type="text"
-                                   value={formatOpd(globalOpd)}
-                                   onChange={(e) => setGlobalOpd(e.target.value.replace(/\D/g, ''))}
-                                   style={{ padding: '6px 10px', border: '1px solid var(--border)', borderRadius: '4px', fontWeight: 'bold', fontSize: '1.05rem', color: 'var(--primary-dark)', width: '160px' }} />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <label style={{ fontWeight: 'bold', color: 'var(--text-dark)' }}>OPD:</label>
+                                <input type="text"
+                                       value={globalOpd}
+                                       onChange={(e) => setGlobalOpd(e.target.value)}
+                                       placeholder="Digite a OPD..."
+                                       style={{ padding: '6px 10px', border: '1px solid var(--border)', borderRadius: '4px', fontWeight: 'bold', fontSize: '1.05rem', color: 'var(--primary-dark)', width: '160px' }} />
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#fef3c7', padding: '4px 12px', borderRadius: '6px', border: '1px solid #fde68a' }}>
+                                <label style={{ fontWeight: 'bold', color: '#92400e' }}>Multiplicador (x):</label>
+                                <input type="number" min="1"
+                                       value={multiplier}
+                                       onChange={(e) => setMultiplier(e.target.value)}
+                                       style={{ padding: '4px 8px', border: '1px solid #fcd34d', borderRadius: '4px', fontWeight: 'bold', fontSize: '1.05rem', color: '#b45309', width: '70px', textAlign: 'center' }} />
+                            </div>
                         </div>
+
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginLeft: 'auto' }}>
                             <span style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: 500 }}>Mostrar Outras Áreas</span>
                             <label className="switch">
@@ -238,20 +291,21 @@ export default function PickingList() {
                                 <tbody>
                                 {kitsArray.map(kit => {
                                     if (!kit.inScope && !showAllZones) return null;
-                                    const isDone = kit.found === kit.quantityRequested && kit.quantityRequested > 0;
+                                    const targetReq = kit.quantityRequested * currentMult;
+                                    const isDone = kit.found === targetReq && targetReq > 0;
                                     return (
                                         <tr key={kit.uniqueId} className={isDone ? "picked" : ""}>
                                             <td className="align-left" style={{ fontWeight: 700 }}>{formatProductCode(kit.productCode)}</td>
                                             <td className="align-left">{kit.description}</td>
                                             <td className="align-center" style={{ color: !kit.inScope ? '#ef4444' : 'inherit', fontWeight: !kit.inScope ? 'bold' : 'normal' }}>{kit.zone}</td>
-                                            <td className="align-center" style={{ fontWeight: 700 }}>{kit.quantityRequested}</td>
+                                            <td className="align-center" style={{ fontWeight: 700, color: currentMult > 1 ? '#d97706' : 'inherit' }}>{targetReq}</td>
                                             <td className="align-center">
-                                                <input type="number" min="0" max={kit.quantityRequested} value={kit.found}
+                                                <input type="number" min="0" max={targetReq} value={kit.found}
                                                        onChange={(e) => handleKitChange(kit.uniqueId, e.target.value)} />
                                             </td>
                                             <td className="align-center">
                                                 <div className={`status-btn ${isDone ? 'checked' : ''}`}
-                                                     onClick={() => handleKitChange(kit.uniqueId, isDone ? 0 : kit.quantityRequested)}></div>
+                                                     onClick={() => handleKitChange(kit.uniqueId, isDone ? 0 : targetReq)}></div>
                                             </td>
                                         </tr>
                                     );
@@ -279,20 +333,21 @@ export default function PickingList() {
                             <tbody>
                             {partsArray.map(part => {
                                 if (!part.inScope && !showAllZones) return null;
-                                const isDone = part.found === part.req && part.req > 0;
+                                const targetReq = part.req * currentMult;
+                                const isDone = part.found === targetReq && targetReq > 0;
                                 return (
                                     <tr key={part.code} className={isDone ? "picked" : ""}>
                                         <td className="align-left" style={{ fontWeight: 600 }}>{formatProductCode(part.code)}</td>
                                         <td className="align-left">{part.desc}</td>
                                         <td className="align-center" style={{ color: !part.inScope ? '#ef4444' : 'inherit', fontWeight: !part.inScope ? 'bold' : 'normal' }}>{part.zone}</td>
-                                        <td className="align-center" style={{ fontWeight: 700 }}>{part.req}</td>
+                                        <td className="align-center" style={{ fontWeight: 700, color: currentMult > 1 ? '#d97706' : 'inherit' }}>{targetReq}</td>
                                         <td className="align-center">
-                                            <input type="number" min="0" max={part.req} value={part.found}
+                                            <input type="number" min="0" max={targetReq} value={part.found}
                                                    onChange={(e) => handlePartChange(part.code, e.target.value)} />
                                         </td>
                                         <td className="align-center">
                                             <div className={`status-btn ${isDone ? 'checked' : ''}`}
-                                                 onClick={() => handlePartChange(part.code, isDone ? 0 : part.req)}></div>
+                                                 onClick={() => handlePartChange(part.code, isDone ? 0 : targetReq)}></div>
                                         </td>
                                     </tr>
                                 );
